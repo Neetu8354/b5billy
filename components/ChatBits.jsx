@@ -285,6 +285,99 @@ export function Sheet({ items, onClose }) {
   );
 }
 
+/* ---------- drag & drop media (shared by user chat + admin console) ---------- */
+export const MEDIA_LIMITS = { image: 5 * 1024 * 1024, video: 50 * 1024 * 1024 };
+
+/* FileList -> { items:[{kind,file}], error } — drops non image/video files and
+   reports oversize ones with a ready-to-show message. */
+export function splitMedia(files) {
+  const items = [];
+  let skipped = 0;
+  let tooBig = null;
+  for (const f of Array.from(files || [])) {
+    const kind = f.type?.startsWith("image/") ? "image" : f.type?.startsWith("video/") ? "video" : null;
+    if (!kind) { skipped++; continue; }
+    if (f.size > MEDIA_LIMITS[kind]) { tooBig = kind; continue; }
+    items.push({ kind, file: f });
+  }
+  let error = null;
+  if (tooBig) error = tooBig === "image" ? "Image is over 5MB" : "Video is over 50MB";
+  else if (skipped && !items.length) error = "Only images and videos can be sent";
+  else if (skipped) error = "Some files were skipped — only images and videos can be sent";
+  return { items, error };
+}
+
+/* WhatsApp-style drop target. Spread dropProps on the chat container; the
+   depth counter keeps child dragenter/leave noise from flickering the veil.
+   Window listeners stop an outside drop from navigating the browser. */
+export function useFileDrop(onFiles) {
+  const [dragging, setDragging] = useState(false);
+  const depth = useRef(0);
+  const cbRef = useRef(onFiles);
+  cbRef.current = onFiles;
+
+  useEffect(() => {
+    const prevent = (e) => e.preventDefault();
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, []);
+
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
+
+  const dropProps = {
+    onDragEnter: (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth.current++;
+      setDragging(true);
+    },
+    onDragOver: (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    },
+    onDragLeave: (e) => {
+      if (!hasFiles(e)) return;
+      depth.current = Math.max(0, depth.current - 1);
+      if (!depth.current) setDragging(false);
+    },
+    onDrop: (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth.current = 0;
+      setDragging(false);
+      cbRef.current?.(e.dataTransfer.files);
+    },
+  };
+  return { dragging, dropProps };
+}
+
+export function DropOverlay() {
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 4000, pointerEvents: "none",
+        background: "rgba(11,20,26,.55)", display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div
+        style={{
+          border: "3px dashed rgba(255,255,255,.85)", borderRadius: 18, padding: "34px 44px",
+          textAlign: "center", color: "#fff", background: "rgba(0,0,0,.25)",
+        }}
+      >
+        <i className="fas fa-images" style={{ fontSize: 44, display: "block", marginBottom: 12 }} />
+        <div style={{ fontSize: 17, fontWeight: 600 }}>Drop images or videos to send</div>
+        <div style={{ fontSize: 12.5, opacity: 0.85, marginTop: 5 }}>Preview opens before sending</div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- image preview popup ---------- */
 const IV_CSS = `
 .iv-back { position:fixed; inset:0; z-index:100500; background:rgba(8,12,16,.78); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
